@@ -326,16 +326,17 @@ def bfs_remove(graph, start_node, end_node, connect = False) :
 
 def FF_optimize(graph) :
     #优化feed forward部分
-    
+    print('*********FeedForward optimizing*********')
     visited_node = set()
     not_remove_op = ['MatMul', 'Add', 'Gelu', 'Relu', 'Tanh']
+    last_ln_node_name = get_last_ln_node_name(graph)
     while True :
         modify = False
         queue = collections.deque()
         for node_index in get_node_topology(graph) :
             nodes_to_remove = []
             ln_node = graph.node[node_index]
-            if ln_node.op_type != 'LayerNormalization' or get_node_from_input_name_and_op_type(graph, ln_node.output[0], 'Reshape') is None: 
+            if ln_node.op_type != 'LayerNormalization' or ln_node.name == last_ln_node_name or get_node_from_input_name_and_op_type(graph, ln_node.output[0], 'MultiHeadAttention') is not None: 
                 continue
             x = ln_node.output[0] #原始保存输入
             y = ''
@@ -360,11 +361,9 @@ def FF_optimize(graph) :
                 elif node.op_type == 'MatMul':
                     reshape_node = get_node_from_input_name_and_op_type(graph, node.output[0], 'Reshape')
                     if reshape_node is None:
-                        print("no reshape_node after matmul")
                         continue
                     bias_node = get_node_from_input_name_and_op_type(graph, reshape_node.output[0], 'Add')
                     if bias_node is None:
-                        print("no bias_node after reshape")
                         continue
                     bias_node.input[0] = node.output[0]
 
@@ -479,6 +478,15 @@ def Is_multihead_attention_start(graph, start_node) :
                 visited_node.add(next_node.name)
     return False
 
+def get_last_ln_node_name(graph) :
+    last_ln_node_name = ''
+    max_ln_id = -1
+    for node in graph.node:
+        if node.op_type == 'LayerNormalization':
+            if int(node.name.split('_')[-1]) > max_ln_id:
+                max_ln_id = int(node.name.split('_')[-1])
+                last_ln_node_name = node.name
+    return last_ln_node_name
 
 
 def Multihead_attention_fusion(graph, mother_graph = None) :
@@ -494,17 +502,38 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
     #key_padding_mask_4d: this mask directly add to the input of softmax
     key_padding_mask_2d =  '' 
     key_padding_mask_4d =  '' 
+    for node in graph.node:
+        if node.op_type == 'Softmax' :
+            mask_add_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'Add')
+            if mask_add_node is not None:
+                l1 = get_node_list_from_input_name(graph, mask_add_node.input[0])
+                l2 = get_node_list_from_input_name(graph, mask_add_node.input[1])
+                if len(l1) > 1 and len(l2) == 1:
+                    key_padding_mask_4d = mask_add_node.input[0]
+                elif len(l1) == 1 and len(l2) > 1:
+                    key_padding_mask_4d = mask_add_node.input[1]
+                else:
+                    key_padding_mask_4d = mask_add_node.input[1]
+                    warnings.warn('the key_mask_padding before softmax seems strange, check it!')
+                mask_node = get_node_from_output_name(graph, key_padding_mask_4d)
+                mask_node.output[0] = key_padding_mask_4d+'_before_cast'
+                mask_node_index = get_node_index(graph, mask_node)
+                cast_node = onnx.helper.make_node('Cast'
+                                                        , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
+                                                        , inputs = [key_padding_mask_4d+'_before_cast']
+                                                        , outputs = [key_padding_mask_4d]
+                                                        )
+                cast_node.attribute.insert(0, onnx.helper.make_attribute('to', 7, 'to'))
+                graph.node.insert(mask_node_index+1, cast_node)
+            else:
+                raise(Exception('can not find key_mask_padding_4d, time to update the fusion code'))
+            print('deal key_padding_mask_4d ok')
+            break
 
     #step2: find the last LN node in advance so that can insert output transpose node
-    last_ln_node = ''
-    max_ln_id = -1
-    for node in graph.node:
-        if node.op_type == 'LayerNormalization':
-            if int(node.name.split('_')[-1]) > max_ln_id:
-                max_ln_id = int(node.name.split('_')[-1])
-                last_ln_node = node.name
-    print('total ',max_ln_id, ' LN nodes')
-    print('last ln node:', last_ln_node)
+    last_ln_node_name = get_last_ln_node_name(graph)
+    print('last ln node:', last_ln_node_name)
+
     
 
 
@@ -539,16 +568,16 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                 graph.node.insert(node_index, transpose_in_node)
                 continue
             
-            if start_node.name == last_ln_node and not last_trans_set:
+            if start_node.name == last_ln_node_name and not last_trans_set:
                 print('insert trans_out node')
                 last_trans_set = True
                 transpose_out_node = onnx.helper.make_node('Transpose'
                                     , name = 'Transpose_out'
-                                    , inputs = [last_ln_node+':0']
+                                    , inputs = [last_ln_node_name+':0']
                                     , outputs = [start_node.output[0]]
                                     )
                 transpose_out_node.attribute.insert(0, onnx.helper.make_attribute('perm', [1,0,2]))
-                start_node.output[0] = last_ln_node+':0'
+                start_node.output[0] = last_ln_node_name+':0'
                 graph.node.insert(node_index+1, transpose_out_node)
                 continue
 
@@ -589,30 +618,6 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                     if not node_eq(ln_node, start_node):
                         ln_node.output[0] = node.output[0]
                         continue
-                elif node.op_type == 'Softmax' :
-                    mask_add_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'Add')
-                    if mask_add_node is not None:
-                        l1 = get_node_list_from_input_name(graph, mask_add_node.input[0])
-                        l2 = get_node_list_from_input_name(graph, mask_add_node.input[1])
-                        if len(l1) > 1 and len(l2) == 1:
-                            key_padding_mask_4d = mask_add_node.input[0]
-                        elif len(l1) == 1 and len(l2) > 1:
-                            key_padding_mask_4d = mask_add_node.input[1]
-                        else:
-                            key_padding_mask_4d = mask_add_node.input[1]
-                            warnings.warn('the key_mask_padding before softmax seems strange, check it!')
-                        mask_node = get_node_from_output_name(graph, key_padding_mask_4d)
-                        mask_node.output[0] = key_padding_mask_4d+'_before_cast'
-                        mask_node_index = get_node_index(graph, mask_node)
-                        cast_node = onnx.helper.make_node('Cast'
-                                                                , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
-                                                                , inputs = [key_padding_mask_4d+'_before_cast']
-                                                                , outputs = [key_padding_mask_4d]
-                                                                )
-                        cast_node.attribute.insert(0, onnx.helper.make_attribute('to', 7, 'to'))
-                        graph.node.insert(mask_node_index+1, cast_node)
-                    else:
-                        raise(Exception('can not find key_mask_padding_4d, time to update the fusion code'))
                 elif node.op_type == 'Concat' and len(node.input) == 4:
                     num_heads_const_name = node.input[2]
                     if mother_graph is None:
