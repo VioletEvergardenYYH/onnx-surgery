@@ -12,6 +12,7 @@ from onnx import TensorProto
 from onnx import optimizer
 import collections
 import pdb
+import warnings
 
 
 def get_node_topology(graph, sub_graph=False) : 
@@ -198,31 +199,6 @@ def get_node_index(graph, node) :
     return None
     
 
-def remove_mask_nodes(graph, node) :
-    nodes_to_remove = []
-    l = get_node_list_from_input_name(graph, node.output[0])
-    for n in l :
-        if n.name[-1] == '9' :
-            continue
-        elif n.name[-1] == '0' :
-            nodes_to_remove.append(n)
-            next_node = get_node_from_intput_name(graph, n.output[0])
-            while next_node.name != 'bert_model/bert/encoder/TransformerEncoder/layer_2/attention/self/MultiHeadsDotProductAttentionLayer/mul_1' :
-                nodes_to_remove.append(next_node)
-                next_node = get_node_from_intput_name(graph, next_node.output[0])
-            nodes_to_remove.append(next_node)
-
-        elif n.name[-1] == '5' :
-            nodes_to_remove.append(n)
-            next_node = get_node_from_intput_name(graph, n.output[0])
-            while next_node.name != 'bert_model/bert/encoder/ones' :
-                nodes_to_remove.append(next_node)
-                next_node = get_node_from_intput_name(graph, next_node.output[0])
-            nodes_to_remove.append(next_node)
-
-        else :
-            print('node error')
-    remove_node_list(graph, nodes_to_remove)
 
 def Tranformer_GELU_fusion(graph) :
     gelu_index = 0
@@ -303,93 +279,6 @@ def Tranformer_GELU_fusion(graph) :
         if not modify :
             break
 
-def Reshape_fusion(graph) :
-    print('reshape fusion......')
-    removed_node = set()
-    while True :
-        modify = False
-        queue = collections.deque()
-        for node_index in get_node_topology(graph) :
-            nodes_to_remove = []
-            layernorm_node = graph.node[node_index]
-            if layernorm_node.op_type != 'LayerNormalization' :
-                continue
-            x = layernorm_node.output[0]
-            if get_node_count_from_input_name(graph, x) != 3 :
-                print ('LayerNormalization next node count != 3')
-                continue
-
-           
-            trans_node = get_node_from_input_name_and_op_type(graph, x, 'Transpose')
-            shape_node = get_node_from_input_name_and_op_type(graph, x, 'Shape')
-            if trans_node is None or shape_node is None :
-                print('expect trans_node and shape_node')
-                continue
-            for node in get_node_list_from_input_name(graph, x) :
-                if node.op_type != 'Add' :
-                    removed_node.add(node.name)
-                    queue.append(node)
-                    nodes_to_remove.append(node)
-
-            gelu_x = ''
-            check_ok = True
-            
-            while queue :
-                node = queue.popleft()
-                rm_flag = True
-                if node.op_type == 'MatMul' and node.name.split('/')[-4] == 'intermediate' :
-                    print('find inter MatMul')
-                    for n in graph.node :
-                        if node_eq(node, n) :
-                            n.input[0] = x
-                    rm_flag = False
-                elif node.op_type == 'Add' and node.name.split('/')[-3] == 'intermediate' :
-                    print('find inter Add')
-                    for n in graph.node :
-                        if node_eq(node, n) :
-                            rnode = get_node_from_output_name_and_op_type(graph, n.input[0], 'Reshape')
-                            if rnode is not None :
-                                n.input[0] = rnode.input[0]
-                            else :
-                                print('can not find reshape node')
-                    rm_flag = False
-                elif node.op_type == 'MatMul' and node.name.split('/')[-4] == 'output' :
-                    print('find output MatMul')
-                    for n in graph.node :
-                        if node_eq(node, n) :
-                            n.input[0] = gelu_x
-                    rm_flag = False
-                elif node.op_type == 'Add' and node.name.split('/')[-3] == 'output' :
-                    print('find output Add')
-                    for n in graph.node :
-                        if node_eq(node, n) :
-                            rnode = get_node_from_output_name_and_op_type(graph, n.input[0], 'Reshape')
-                            if rnode is not None :
-                                n.input[0] = rnode.input[0]
-                            else :
-                                print('can not find reshape node')
-                    continue
-                elif node.op_type == 'Gelu' :
-                    print('find Gelu')
-                    rm_flag = False
-                    gelu_x = node.output[0]
-                else :
-                    pass
-
-                if rm_flag and node.name not in removed_node:
-                    removed_node.add(node.name)
-                    nodes_to_remove.append(node)
-
-                for next_node in get_node_list_from_input_name(graph, node.output[0]) :
-                    queue.append(next_node)
-
-            if check_ok :
-                modify = True
-                remove_node_list(graph, nodes_to_remove)
-                break
-
-        if not modify :
-            break
 
 
 def bfs_remove(graph, start_node, end_node, connect = False) :
@@ -437,13 +326,9 @@ def bfs_remove(graph, start_node, end_node, connect = False) :
 
 def FF_optimize(graph) :
     #优化feed forward部分
-    # bfs_remove(graph, 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/encoder/layer_0/ffn/Reshape', 'Reshape__485', True)
-    # bfs_remove(graph, 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/encoder/layer_1/ffn/Reshape', 'Reshape__744', True)
-    # bfs_remove(graph, 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/encoder/layer_2/ffn/Reshape', 'Reshape__1001', True)
-    # bfs_remove(graph, 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/encoder/layer_3/ffn/Reshape', 'Reshape__1258', True)
     
     visited_node = set()
-    not_remove_op = ['MatMul', 'Add', 'Gelu', 'Relu']
+    not_remove_op = ['MatMul', 'Add', 'Gelu', 'Relu', 'Tanh']
     while True :
         modify = False
         queue = collections.deque()
@@ -551,13 +436,6 @@ def recognise_node(name) :
             ret = 4
     return ret
 
-def Is_attn_softmax(graph, softmax_node):
-    add_node = get_node_from_output_name_and_op_type(graph, softmax_node.input[0], 'Add')
-    matmul_node = get_node_from_input_name_and_op_type(graph, softmax_node.output[0], 'MatMul')
-    if add_node is not None and matmul_node is not None:
-        return add_node.input[1]
-    else:
-        return False
 
 def reverse_bfs(graph, start) :
     visited_node = set()
@@ -589,8 +467,6 @@ def Is_multihead_attention_start(graph, start_node) :
         queue.append(node)
         visited_node.add(node.name)
 
-
-
     while queue :
         node = queue.popleft()
         if node.op_type == 'Add':
@@ -614,42 +490,43 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
     removed_node = set()
 
     #step1: make Multihead_attention's mask
-    # Multihead_attention needs the mask input like: [f,f,f,f,f,t,t,t], where t(True) is the padding token
-    input_mask =  'model/encoder/mask:0' 
-    for node in graph.node:
-        if node.op_type == 'Softmax' and Is_attn_softmax(graph, node):
-            mask_input = Is_attn_softmax(graph, node)
-            mask_node = reverse_bfs(graph, mask_input)
-            break
-    if mask_node is None:
-        raise Exception('can not find mask node(node like Equal or Less)')
-    mask_node_index = get_node_index(graph, mask_node)
-    if mask_node.op_type == 'Equal':
-        cast_node = onnx.helper.make_node('Cast'
-                                                , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
-                                                , inputs = [mask_node.output[0]]
-                                                , outputs = [input_mask]
-                                                )
-        cast_node.attribute.insert(0, onnx.helper.make_attribute('to', 7, 'to'))
-        graph.node.insert(mask_node_index + 1, cast_node)
-    elif mask_node.op_type == 'Less':
-        not_node = onnx.helper.make_node('Not'
-                                                    , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_not' 
-                                                    , inputs = [mask_node.output[0]]
-                                                    , outputs = [input_mask+'_before_cast']
-                                                    )
+    #key_padding_mask_2d: Multihead_attention needs the mask input like: [f,f,f,f,f,t,t,t], where t(True) is the padding token
+    #key_padding_mask_4d: this mask directly add to the input of softmax
+    key_padding_mask_2d =  '' 
+    key_padding_mask_4d =  '' 
+    # for node in graph.node:
+    #     if node.op_type == 'Softmax' and Is_attn_softmax(graph, node):
+    #         mask_input = Is_attn_softmax(graph, node)
+    #         mask_node = reverse_bfs(graph, mask_input)
+    #         break
+    # if mask_node is None:
+    #     raise Exception('can not find mask node(node like Equal or Less)')
+    # mask_node_index = get_node_index(graph, mask_node)
+    # if mask_node.op_type == 'Equal':
+    #     cast_node = onnx.helper.make_node('Cast'
+    #                                             , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
+    #                                             , inputs = [mask_node.output[0]]
+    #                                             , outputs = [input_mask]
+    #                                             )
+    #     cast_node.attribute.insert(0, onnx.helper.make_attribute('to', 7, 'to'))
+    #     graph.node.insert(mask_node_index + 1, cast_node)
+    # elif mask_node.op_type == 'Less':
+    #     not_node = onnx.helper.make_node('Not'
+    #                                                 , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_not' 
+    #                                                 , inputs = [mask_node.output[0]]
+    #                                                 , outputs = [input_mask+'_before_cast']
+    #                                                 )
 
             
 
-        cast_node = onnx.helper.make_node('Cast'
-                                                , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
-                                                , inputs = [input_mask+'_before_cast']
-                                                , outputs = [input_mask]
-                                                )
-        cast_node.attribute.insert(0, onnx.helper.make_attribute('to', 7, 'to'))
-        graph.node.insert(mask_node_index+1, not_node)
-        graph.node.insert(mask_node_index+2, cast_node)
-    print ('deal mask ok')
+    #     cast_node = onnx.helper.make_node('Cast'
+    #                                             , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
+    #                                             , inputs = [input_mask+'_before_cast']
+    #                                             , outputs = [input_mask]
+    #                                             )
+    #     cast_node.attribute.insert(0, onnx.helper.make_attribute('to', 7, 'to'))
+    #     graph.node.insert(mask_node_index+1, not_node)
+    #     graph.node.insert(mask_node_index+2, cast_node)
 
     #step2: find the last LN node in advance so that can insert output transpose node
     last_ln_node = ''
@@ -665,7 +542,7 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
 
 
     #step3: BFS the MHA graph and get all the initialiser
-    #the input usually is B,H,W, but the MHA needs H,B,W, so we need two transpose nodes(in & out)
+    #the input usually is B,T,E, but the MHA needs T,B,E so we need two transpose nodes(in & out)
     first_trans_set = False
     last_trans_set = False
     while True :
@@ -721,7 +598,6 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                     queue.append(node)
                     nodes_to_remove.append(node)
 
-            key_padding_mask = input_mask
             in_project_weight = 'in_project_weight' + str(Multihead_attention_op_index)
             in_project_bias = ''
             out_project_weight = ''
@@ -746,6 +622,20 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                     if not node_eq(ln_node, start_node):
                         ln_node.output[0] = node.output[0]
                         continue
+                elif node.op_type == 'Softmax' :
+                    mask_add_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'Add')
+                    if mask_add_node is not None:
+                        l1 = get_node_list_from_input_name(graph, mask_add_node.input[0])
+                        l2 = get_node_list_from_input_name(graph, mask_add_node.input[1])
+                        if len(l1) > 1 and len(l2) == 1:
+                            key_padding_mask_4d = mask_add_node.input[0]
+                        elif len(l1) == 1 and len(l2) > 1:
+                            key_padding_mask_4d = mask_add_node.input[1]
+                        else:
+                            key_padding_mask_4d = mask_add_node.input[1]
+                            warnings.warn('the key_mask_padding before softmax seems strange, check it!')
+                    else:
+                        raise(Exception('can not find key_mask_padding_4d, time to update the fusion code'))
                 elif node.op_type == 'Concat' and len(node.input) == 4:
                     num_heads_const_name = node.input[2]
                     if mother_graph is None:
@@ -842,7 +732,7 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
 
                 Multihead_attention_node = onnx.helper.make_node('MultiHeadAttention'
                                                     , name = 'MultiHeadAttention_' + str(Multihead_attention_op_index)
-                                                    , inputs = [x, key_padding_mask, in_project_weight, in_project_bias, out_project_weight, out_project_bias]
+                                                    , inputs = [x, key_padding_mask_2d, in_project_weight, in_project_bias, out_project_weight, out_project_bias, key_padding_mask_4d]
                                                     , outputs = [y]
                                                     )
                 Multihead_attention_node.attribute.insert(0, onnx.helper.make_attribute("num_heads", num_heads, "num of heads"))
@@ -850,7 +740,6 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                 print('set Multihead_attention_node on start_node next pos: ', start_index)
                 graph.node.insert(start_index+1, Multihead_attention_node)
                 remove_node_list(graph, nodes_to_remove)
-     
                 break
 
 
@@ -961,91 +850,6 @@ def layer_normal_fusion_general(graph, mother_graph = None) :
         
     
     
-def layer_normal_fusion_0(graph) :
-    layer_normal_op_index = 0
-    while True :
-        #每次找到一个LN节点进行替换
-        modify = False
-        for node_index in range(len(graph.node)):#get_node_topology(graph) :
-            nodes_to_remove = []
-            reduce_mean_node = graph.node[node_index]
-            if reduce_mean_node.op_type != 'ReduceMean'  : #从ReduceMean节点出发
-                continue
-            x = reduce_mean_node.input[0] #原始保存输入
-            nodes_to_remove.append(reduce_mean_node)
-            if get_node_count_from_input_name(graph, reduce_mean_node.output[0]) != 1 : ##输入为ReduceMean节点输出的node数量（ReduceMean的下个节点个数）
-                print ('The first reduce mean next node count != 1')
-                continue
-            next_sub_node = get_node_from_input_name_and_op_type(graph, reduce_mean_node.output[0], 'Sub')
-            if next_sub_node is None :
-                print('next sub node is None')
-                continue
-            if x != next_sub_node.input[0] : #计算完首个ReduceMean之后应该算x-mean
-                print ('x(%s) != next_sub_node.input[0](%s)' % (x, next_sub_node.input[0]))
-                continue
-            if get_node_count_from_input_name(graph, next_sub_node.output[0]) != 2 :
-                print ('next sub node ouput node count != 2')
-                continue
-            nodes_to_remove.append(next_sub_node)
-            next_node = next_sub_node
-            next_list = ['Mul', 'ReduceMean', 'Add', 'Sqrt', 'Reciprocal', 'Mul', 'Mul', 'Add']
-            check_is_ln_mid = True #因为Mul节点有分裂，所以先检查到Mul的所有节点
-            alpha = ''
-            bias = ''
-            eps = 0.00001
-            for i in range(len(next_list)):
-                
-                next_node = get_node_from_input_name_and_op_type(graph, next_node.output[0], next_list[i])
-                if next_node is None :
-                    print('index : %d, next node expect %s, but got None' % (i, next_list[i]))
-                    check_is_ln_mid = False
-                    break
-                if i == 2:
-                    eps_numpy = get_initializer_numpy_value(graph, next_node.input[1])
-                    if eps_numpy is None :
-                        print ('eps numpy is None')
-                        check_is_ln_mid = False
-                        break
-                    if eps_numpy.size != 1 :
-                        print('eps numpy size != 1')
-                        check_is_ln_mid = False
-                        break
-                    eps = float(eps_numpy)
-                elif i == 6:
-                    alpha = next_node.input[1]
-                    if not is_initializer(graph, alpha) :
-                        print ('alpha(%s) is not initializer' % alpha)
-                        check_is_ln_mid = False
-                        break
-                elif i == 7:
-                    bias = next_node.input[1]
-                    out = next_node.output[0]
-                    if not is_initializer(graph, bias) :
-                        print ('bias(%s) is not initializer' % bias)
-                        check_is_ln_mid = False
-                        break
-                nodes_to_remove.append(next_node)
-            
-            if not check_is_ln_mid :
-                print ('check is ln False')
-                continue
-            layer_normal_op_index += 1
-            print('find reduce mean node(%d) is LayerNormalization(%d)' % (node_index, layer_normal_op_index))
-            modify = True
-            
-            layer_norm_node = onnx.helper.make_node('LayerNormalization'
-                                                    , name = 'LayerNormalization_' + str(layer_normal_op_index)
-                                                    , inputs = [x, alpha, bias]
-                                                    , outputs = [out]
-                                                    )
-            layer_norm_node.attribute.insert(0, onnx.helper.make_attribute("axis", -1, "axis"))
-            layer_norm_node.attribute.insert(1, onnx.helper.make_attribute("epsilon", eps, "eps for layer normal"))
-            graph.node.insert(node_index, layer_norm_node)
-            remove_node_list(graph, nodes_to_remove)
-            break
-        if not modify : #遍历整个计算图的循环如果不是因为修改LN跳出，那就是因为遍历结束了，完成任务跳出死循环
-            break
-    return graph
 
 def subgraph_optimize(graph) :
     bfs_remove(graph, 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/encoder/layer_3/ffn/concat', 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/encoder/layer_3/ffn/Reshape__1193')
