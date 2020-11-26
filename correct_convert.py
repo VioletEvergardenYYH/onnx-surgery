@@ -494,39 +494,6 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
     #key_padding_mask_4d: this mask directly add to the input of softmax
     key_padding_mask_2d =  '' 
     key_padding_mask_4d =  '' 
-    # for node in graph.node:
-    #     if node.op_type == 'Softmax' and Is_attn_softmax(graph, node):
-    #         mask_input = Is_attn_softmax(graph, node)
-    #         mask_node = reverse_bfs(graph, mask_input)
-    #         break
-    # if mask_node is None:
-    #     raise Exception('can not find mask node(node like Equal or Less)')
-    # mask_node_index = get_node_index(graph, mask_node)
-    # if mask_node.op_type == 'Equal':
-    #     cast_node = onnx.helper.make_node('Cast'
-    #                                             , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
-    #                                             , inputs = [mask_node.output[0]]
-    #                                             , outputs = [input_mask]
-    #                                             )
-    #     cast_node.attribute.insert(0, onnx.helper.make_attribute('to', 7, 'to'))
-    #     graph.node.insert(mask_node_index + 1, cast_node)
-    # elif mask_node.op_type == 'Less':
-    #     not_node = onnx.helper.make_node('Not'
-    #                                                 , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_not' 
-    #                                                 , inputs = [mask_node.output[0]]
-    #                                                 , outputs = [input_mask+'_before_cast']
-    #                                                 )
-
-            
-
-    #     cast_node = onnx.helper.make_node('Cast'
-    #                                             , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
-    #                                             , inputs = [input_mask+'_before_cast']
-    #                                             , outputs = [input_mask]
-    #                                             )
-    #     cast_node.attribute.insert(0, onnx.helper.make_attribute('to', 7, 'to'))
-    #     graph.node.insert(mask_node_index+1, not_node)
-    #     graph.node.insert(mask_node_index+2, cast_node)
 
     #step2: find the last LN node in advance so that can insert output transpose node
     last_ln_node = ''
@@ -634,8 +601,9 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                         else:
                             key_padding_mask_4d = mask_add_node.input[1]
                             warnings.warn('the key_mask_padding before softmax seems strange, check it!')
-                        mask_add_node.output[0] = key_padding_mask_4d+'_before_cast'
-                        mask_node_index = get_node_index(graph, mask_add_node)
+                        mask_node = get_node_from_output_name(graph, key_padding_mask_4d)
+                        mask_node.output[0] = key_padding_mask_4d+'_before_cast'
+                        mask_node_index = get_node_index(graph, mask_node)
                         cast_node = onnx.helper.make_node('Cast'
                                                                 , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
                                                                 , inputs = [key_padding_mask_4d+'_before_cast']
