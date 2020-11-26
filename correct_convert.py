@@ -634,6 +634,15 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                         else:
                             key_padding_mask_4d = mask_add_node.input[1]
                             warnings.warn('the key_mask_padding before softmax seems strange, check it!')
+                        mask_add_node.output[0] = key_padding_mask_4d+'_before_cast'
+                        mask_node_index = get_node_index(graph, mask_add_node)
+                        cast_node = onnx.helper.make_node('Cast'
+                                                                , name = 'bert_model/bert/encoder/TransformerEncoder/key_mask_cast' 
+                                                                , inputs = [key_padding_mask_4d+'_before_cast']
+                                                                , outputs = [key_padding_mask_4d]
+                                                                )
+                        cast_node.attribute.insert(0, onnx.helper.make_attribute('to', 7, 'to'))
+                        graph.node.insert(mask_node_index+1, cast_node)
                     else:
                         raise(Exception('can not find key_mask_padding_4d, time to update the fusion code'))
                 elif node.op_type == 'Concat' and len(node.input) == 4:
