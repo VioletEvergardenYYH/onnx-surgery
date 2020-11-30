@@ -848,7 +848,7 @@ def Tranformer_fusion(graph):
     layer_normal_fusion_general(graph)
     Multihead_attention_fusion(graph)
     Tranformer_GELU_fusion(graph)
-    FF_optimize(graph)
+   # FF_optimize(graph)
 
     
 import onnxruntime as rt
