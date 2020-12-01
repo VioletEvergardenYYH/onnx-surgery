@@ -186,158 +186,17 @@ def get_node_index(graph, node) :
 def export_graph(graph, name):
     model_def = helper.make_model(graph, producer_name='onnx-example')
     onnx.save(model_def, name)
-def fix_IsFinite(graph) :
-        op_index = 0
-        while True :
-            modify = False
-            for node_index in range(len(graph.node)) :
-                IsFinite_node = graph.node[node_index]
-                if IsFinite_node.op_type != 'IsFinite' :
-                    continue
-            
-                op_index += 1
-                print('find IsFinite_node'+str(op_index))
-                x = IsFinite_node.input[0]
-                y = IsFinite_node.output[0]
-                isnan_out = 'IsNaN'+str(op_index)+':0'
-                isinf_out = 'IsInf'+str(op_index)+':0'
 
-                isnan_node = onnx.helper.make_node('IsNaN'
-                                                    ,name='IsNaN'+str(op_index)
-                                                    ,inputs=[x]
-                                                    ,outputs=[isnan_out]
-                                                    )
 
-                isinf_node = onnx.helper.make_node('IsInf'
-                                                    , name = 'IsInf'+str(op_index)
-                                                    , inputs = [x]
-                                                    , outputs = [isinf_out]
-                                                    )
- 
-                or_node = onnx.helper.make_node('Or'
-                                                    , name = 'Or'+str(op_index)
-                                                    , inputs = [isnan_out, isinf_out]
-                                                    , outputs = ['Or'+str(op_index)+':0']
-                                                    )
-                not_node = onnx.helper.make_node('Not'
-                                                    , name = 'Not'+str(op_index)
-                                                    , inputs = ['Or'+str(op_index)+':0']
-                                                    , outputs = [y]
-                                                    )
-                graph.node.insert(node_index, isnan_node)
-                graph.node.insert(node_index, isinf_node)
-                graph.node.insert(node_index, or_node)
-                graph.node.insert(node_index, not_node)
-                graph.node.remove(IsFinite_node)
-                modify = True
-                break
-            if not modify :
-                break
-def bfs_remove(graph, start_node, end_node, connect = False) :
-    """
-    remove nodes from start_node to end_node with bfs, removed nodes include those two nodes
-
-    start_node: name of the start_node
-    end_node: name of the end_node
-    connect: if true, last_node(the node after end_node).input[0] = start_node.input[0]
-    """
-    nodes_to_remove = []
-    removed_node = set()
-    queue = collections.deque()
-    x = ""
-    for node in graph.node :
-        if node.name == start_node :
-            x = node.input[0]
-            nodes_to_remove.append(node)
-            queue.append(node)
-            removed_node.add(node.name)
-            break
-    if connect == True:
-        for node in graph.node:
-            if node.name == end_node:
-                last_node = get_node_from_intput_name(graph, node.output[0])
-                if last_node is not None:
-                    if last_node.op_type == 'MatMul' and node.op_type == 'convert_gradient_to_tensor_HBc3xYw22Mw':
-                        
-                        for node_index in range(len(graph.node)):
-                            mnode = graph.node[node_index]
-                            if node_eq(last_node, mnode):
-                                break
-                        reshape_node = helper.make_node('Reshape'
-                                            ,name='insert_Reshape'
-                                            ,inputs=[x, 'const_fold_cg']
-                                            ,outputs=['insert_Reshape:0']
-                                            )
-                        graph.node.insert(node_index, reshape_node)
-                        shape_init = onnx.helper.make_tensor('const_fold_cg', 7, [2], [512, -1])
-                        append_initializer(graph, shape_init)
-                        last_node.input[1] = 'insert_Reshape:0'
-                
-                    else:
-                        last_node.input[0] = x
-    while queue :
-        node = queue.popleft()
-        if node.name == end_node :
-            continue
-        i = 0
-        if node.op_type == 'Loop':
-            i = 1
-        for next_node in get_node_list_from_input_name(graph, node.output[i]) :
-            if next_node.name not in removed_node :
-                queue.append(next_node)
-                removed_node.add(next_node.name)
-                nodes_to_remove.append(next_node)
-    
-    print('bfs remove total', len(nodes_to_remove), 'nodes')
-    remove_node_list(graph, nodes_to_remove)
 class Surgery(object):
-    def __init__(self, onnx_model_path):
-        self.model = onnx.load(onnx_model_path)
+    def __init__(self, model):
+        self.model = model
 
     def export(self, file_name, infer_shapes=False):
         if infer_shapes:
             self.model = onnx.shape_inference.infer_shapes(self.model)
         #onnx.checker.check_model(self.model)
         onnx.save(self.model, file_name)
-
-    def list_model_inputs(self, nums):
-        count = 0
-        for mi in self.model.graph.input:
-            print(mi)
-            '''
-            # NOTE:
-            # the shape or dim in tensor is something like this below
-            # it is just a list of {}, both dim_param and dim_value are optional
-
-		shape {
-		  dim {
-		    dim_param: "batch_size"
-                    dim_value: 32
-		  }
-		  dim {
-                    dim_param: "channel"
-		    dim_value: 3
-		  }
-		  dim {
-                    dim_param: "height"
-		    dim_value: 224
-		  }
-		  dim {
-                    dim_param: "weight"
-		    dim_value: 224
-		  }
-		}
-
-            # we can access them like this
-            # tensor_dim = model_input.type.tensor_type.shape.dim
-            # print(tensor_dim[0].dim_param)
-            # print(tensor_dim[0].dim_param)
-            # print(tensor_dim[x].dim_param)
-            # print(tensor_dim[x].dim_value)
-            '''
-            count += 1
-            if count == nums:
-                break
 
     def set_model_input_batch_size(self, index=0, name=None, batch_size=8):
         model_input = None
@@ -380,18 +239,6 @@ class Surgery(object):
                 print("input shape must be set")
         else:
             print("get model input error, check your index or name")
-
-    def get_node_by_name(self, name):
-        for node in self.model.graph.node:
-            if node.name == name:
-                return node
-
-    def get_nodes_by_optype(self, typename):
-        nodes = []
-        for node in self.model.graph.node:
-            if node.op_type == typename:
-                nodes.append(node)
-        return nodes
     
     def fix_loop_body(self):
         while True:
@@ -520,13 +367,10 @@ class Surgery(object):
             if node.op_type == 'MatrixBandPart':
                 cnt += 1
                 node.domain = ''
-
                 node.input.remove(node.input[1])
                 node.input.remove(node.input[1])
                 self.set_node_attribute(node, 'num_lower', -1)
                 self.set_node_attribute(node, 'num_upper', 0)
-
-
         print(cnt," MatrixBandPart nodes have been fixed")
         get_node_topology(self.model.graph)
 
@@ -594,8 +438,6 @@ class Surgery(object):
                         break
 
                 
-
-
                 constant_node = onnx.helper.make_node('ConstantOfShape'
                                                     ,name='ConstantOfShape/before_ScatterND'+str(op_index)
                                                     ,inputs=[shape_name+'_cast']
@@ -617,11 +459,6 @@ class Surgery(object):
                 break
                 
     
-
-
-
-
-
 
 
     def get_weight_by_name(self, name):

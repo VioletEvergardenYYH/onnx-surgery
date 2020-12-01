@@ -281,7 +281,7 @@ def Tranformer_GELU_fusion(graph) :
 
 
 
-def bfs_remove(graph, start_node, end_node, connect = False) :
+def bfs_remove(graph, start_node, end_node, connect = False, verbose = False) :
     """
     remove nodes from start_node to end_node with bfs, removed nodes include those two nodes
 
@@ -318,8 +318,8 @@ def bfs_remove(graph, start_node, end_node, connect = False) :
                 queue.append(next_node)
                 removed_node.add(next_node.name)
                 nodes_to_remove.append(next_node)
-    
-    print('bfs remove total', len(nodes_to_remove), 'nodes')
+    if verbose:
+        print('bfs remove total', len(nodes_to_remove), 'nodes')
     remove_node_list(graph, nodes_to_remove)
 
 
@@ -396,8 +396,7 @@ def FF_optimize(graph) :
        
         if not modify : #遍历整个计算图的循环如果不是因为修改LN跳出，那就是因为遍历结束了，完成任务跳出死循环
             break
-    # bfs_remove(graph, 'bert_model/bert/encoder/Reshape/shape_Concat__20', 'bert_model/bert/encoder/TransformerEncoder/layer_2/attention/self/MultiHeadsDotProductAttentionLayer/mul_1')
-    # bfs_remove(graph, 'bert_model/bert/encoder/ones/packed_Concat__15', 'bert_model/bert/encoder/ones')
+
 
     
 
@@ -620,10 +619,7 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                         continue
                 elif node.op_type == 'Concat' and len(node.input) == 4:
                     num_heads_const_name = node.input[2]
-                    if mother_graph is None:
-                        num_heads_numpy = get_initializer_numpy_value(graph, num_heads_const_name)
-                    else:
-                        num_heads_numpy = get_initializer_numpy_value(mother_graph, num_heads_const_name)
+                    num_heads_numpy = get_initializer_numpy_value(mother_graph, num_heads_const_name)
                     num_heads = int(num_heads_numpy)
 
                 elif node.op_type == 'MatMul' and recognise_node(node.name) == 1 :
@@ -632,13 +628,13 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                         print ('query_weight is not init')
                         break
 
-                    query_weight = get_initializer_numpy_value(graph, node.input[1])
+                    query_weight = get_initializer_numpy_value(mother_graph, node.input[1])
                 elif node.op_type == 'MatMul' and recognise_node(node.name) == 2 :
                     if not is_initializer(mother_graph, node.input[1]):
                         check_ok = False
                         print ('key_weight is not init')
                         break
-                    key_weight = get_initializer_numpy_value(graph, node.input[1])
+                    key_weight = get_initializer_numpy_value(mother_graph, node.input[1])
 
                 elif node.op_type == 'MatMul' and recognise_node(node.name) == 3 :
                     if not is_initializer(mother_graph, node.input[1]):
@@ -646,7 +642,7 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                         print ('value_weight is not init')
                         break
 
-                    value_weight = get_initializer_numpy_value(graph, node.input[1])
+                    value_weight = get_initializer_numpy_value(mother_graph, node.input[1])
                 
                 elif node.op_type == 'Add' and recognise_node(node.name) == 1 :
                     if not is_initializer(mother_graph, node.input[1]):
@@ -654,21 +650,21 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                         print ('query_bias is not init')
                         break
 
-                    query_bias = get_initializer_numpy_value(graph, node.input[1])
+                    query_bias = get_initializer_numpy_value(mother_graph, node.input[1])
                 elif node.op_type == 'Add' and recognise_node(node.name) == 2 :
                     if not is_initializer(mother_graph, node.input[1]):
                         check_ok = False
                         print ('key_bias is not init')
                         break
 
-                    key_bias = get_initializer_numpy_value(graph, node.input[1])
+                    key_bias = get_initializer_numpy_value(mother_graph, node.input[1])
                 elif node.op_type == 'Add' and recognise_node(node.name) == 3 :
                     if not is_initializer(mother_graph, node.input[1]):
                         check_ok = False
                         print ('value_bias is not init')
                         break
 
-                    value_bias = get_initializer_numpy_value(graph, node.input[1])
+                    value_bias = get_initializer_numpy_value(mother_graph, node.input[1])
 
                 elif node.op_type == 'MatMul' and recognise_node(node.name) == 4 :
                     if not is_initializer(mother_graph, node.input[1]):
@@ -697,20 +693,14 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
                 modify = True
                 in_project_weight_cat = np.concatenate((query_weight, key_weight, value_weight), axis=1)
                 in_project_weight_init = onnx.helper.make_tensor('in_project_weight'+str(Multihead_attention_op_index), TensorProto.FLOAT, list(in_project_weight_cat.shape), in_project_weight_cat.reshape(-1).tolist())
-                if mother_graph is None:
-                    append_initializer(graph, in_project_weight_init)
-                else:
-                    append_initializer(mother_graph, in_project_weight_init)
+                append_initializer(mother_graph, in_project_weight_init)
                 if query_bias is None or key_bias is None or value_bias is None :
                     pass
                 else :
                     in_project_bias = 'in_project_bias' + str(Multihead_attention_op_index)
                     in_project_bias_cat = np.concatenate((query_bias, key_bias, value_bias), axis=0)
                     in_project_bias_init = onnx.helper.make_tensor('in_project_bias'+str(Multihead_attention_op_index), TensorProto.FLOAT , list(in_project_bias_cat.shape), in_project_bias_cat.reshape(-1).tolist())
-                    if mother_graph is None:
-                        append_initializer(graph, in_project_bias_init)
-                    else:
-                        append_initializer(mother_graph, in_project_bias_init)
+                    append_initializer(mother_graph, in_project_bias_init)
 
                 Multihead_attention_node = onnx.helper.make_node('MultiHeadAttention'
                                                     , name = 'MultiHeadAttention_' + str(Multihead_attention_op_index)
@@ -727,7 +717,7 @@ def Multihead_attention_fusion(graph, mother_graph = None) :
 
         if not modify :
             break
-    #bfs_remove(graph, 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/embedding_to_padding/ToFloat', 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/attention_bias_ignore_padding/ExpandDims_1')
+
 
     
 
@@ -830,17 +820,35 @@ def layer_normal_fusion_general(graph, mother_graph = None) :
     return graph
 
         
-    
+def remove_Transpose2(graph, mother_graph = None):
+    print('fixing transpse2')
+    if mother_graph is None:
+        mother_graph = graph
+    cnt = 0
+    for node in graph.node:
+        if node.op_type == 'Transpose2':
+            concat_node = get_node_from_output_name_and_op_type(graph, node.input[1], 'Concat')
+            if concat_node is not None and is_initializer(mother_graph, concat_node.input[0]) and is_initializer(mother_graph, concat_node.input[1]):
+                transpose2_list = get_node_list_from_input_name_and_op_type(graph, concat_node.output[0], 'Transpose2')
+                for n in transpose2_list:
+                    cnt += 1
+                    n.input.remove(n.input[1])
+                    bfs_remove(graph, n.name, n.name, connect=True, verbose=False)
+                remove_node(graph, concat_node)
+                print('concat_node has been removed')
+    print(cnt," Transpose2 nodes have been fixed")
     
 
 def subgraph_optimize(graph) :
-    bfs_remove(graph, 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/encoder/layer_3/ffn/concat', 'gec_ged_model_revised_gedloss_1/body/parallel_0/body/encoder/layer_3/ffn/Reshape__1193')
     for node in graph.node:
-        if node.name == 'generic_loop_Loop__81':
+        if node.op_type == 'Loop':
             print('find decoder subgraph')
             sub_graph = node.attribute[0].g
-            layer_normal_fusion_general(sub_graph, graph)
-            Multihead_attention_fusion(sub_graph)
+            remove_Transpose2(sub_graph, mother_graph = graph)
+            layer_normal_fusion_general(sub_graph, mother_graph = graph)
+            Multihead_attention_fusion(sub_graph, mother_graph = graph)
+            Tranformer_GELU_fusion(sub_graph)
+            FF_optimize()
             
                 
 
@@ -848,10 +856,8 @@ def Tranformer_fusion(graph):
     layer_normal_fusion_general(graph)
     Multihead_attention_fusion(graph)
     Tranformer_GELU_fusion(graph)
-   # FF_optimize(graph)
+    FF_optimize(graph)
 
-    
-import onnxruntime as rt
 import sys
 
 def main() :
@@ -865,16 +871,11 @@ def main() :
         out_file = sys.argv[2]
     else :
         out_file = input_file.split('.onnx')[0] + '-stream.onnx'
-    #onnx run time optimize
-    #onnx_tmp_file = input_file.split('.onnx')[0] + '-runtimeopt.onnx'
 
-    # sess_options = rt.SessionOptions()
-    # sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_BASIC #
-    # sess_options.optimized_model_filepath = onnx_tmp_file
-    # session = rt.InferenceSession(input_file, sess_options)
 
     model = onnx.load(input_file)
     #layer_normal_fusion_general(model.graph)
+    remove_Transpose2(model.graph)
     Tranformer_fusion(model.graph)
 
     
