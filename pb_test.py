@@ -27,6 +27,12 @@ def freeze_graph_test(pb_path):
                 #out2 = np.array(out2)
                 out = sess.run([out_tensor], feed_dict = {input_tensor:x, input_lens:y})
                 out = np.array(out)
+                x = np.array([178, 1138, 170, 3676, 1, 1])
+                x = np.reshape(x, [1, -1, 1, 1])
+
+                out1, out2 = sess.run([out1_tensor, out2_tensor], feed_dict = {input_tensor:x})
+                out1 = np.array(out1)
+                out2 = np.array(out2)
                 print("---------------")
                 print(out)
                 #print(out1)
@@ -34,5 +40,5 @@ def freeze_graph_test(pb_path):
                 #print(out2)
                 print("test done")
 if __name__ == '__main__':
-    pb_path = '/Users/yangyuehang/Desktop/frozen_graph.pb'
+    pb_path = '/data00/home/yangyuehang/model/correct/capt_gec.pb'
     freeze_graph_test(pb_path)
