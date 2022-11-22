@@ -6,7 +6,6 @@
 
 import onnx
 import numpy as np
-import uuid
 from onnx.helper import make_attribute, make_node
 from onnx import TensorProto
 import collections
@@ -222,7 +221,7 @@ def Tranformer_GELU_fusion(graph, mother_graph = None) :
     gelu_index = 0
     while True :
         modify = False
-        for node_index in len(graph.node) :
+        for node_index in get_node_topology(graph, mother_graph=mother_graph) :
             nodes_to_remove = []
             pow_node = graph.node[node_index]
             if pow_node.op_type != 'Pow' :
@@ -233,54 +232,54 @@ def Tranformer_GELU_fusion(graph, mother_graph = None) :
             if mul_node_1 is not None :
                 nodes_to_remove.append(mul_node_1)
             else :
-                #print ('expect mul_node_1')
+                print ('expect mul_node_1')
                 continue
 
             add_node_1 = get_node_from_input_name_and_op_type(graph, mul_node_1.output[0], 'Add')
             if add_node_1 is not None :
                 nodes_to_remove.append(add_node_1)
             else :
-                #print ('expect add_node')
+                print ('expect add_node')
                 continue
 
             mul_node_2 = get_node_from_input_name_and_op_type(graph, add_node_1.output[0], 'Mul')
             if mul_node_2 is not None :
                 nodes_to_remove.append(mul_node_2)
             else :
-                #print ('expect mul_node_2')
+                print ('expect mul_node_2')
                 continue
 
             tanh_node = get_node_from_input_name_and_op_type(graph, mul_node_2.output[0], 'Tanh')
             if tanh_node is not None :
                 nodes_to_remove.append(tanh_node)
             else :
-                #print ('expect tanh_node')
+                print ('expect tanh_node')
                 continue
 
             add_node_2 = get_node_from_input_name_and_op_type(graph, tanh_node.output[0], 'Add')
             if add_node_2 is not None :
                 nodes_to_remove.append(add_node_2)
             else :
-                #print ('expect add_node_2')
+                print ('expect add_node_2')
                 continue
 
             mul_node_3 = get_node_from_input_name_and_op_type(graph, add_node_2.output[0], 'Mul')
             if mul_node_3 is not None :
                 nodes_to_remove.append(mul_node_3)
             else :
-                #print ('expect mul_node_3')
+                print ('expect mul_node_3')
                 continue
 
             mul_node_4 = get_node_from_input_name_and_op_type(graph, mul_node_3.output[0], 'Mul')
             if mul_node_4 is not None :
                 nodes_to_remove.append(mul_node_4)
             else :
-                #print ('expect mul_node_4')
+                print ('expect mul_node_4')
                 continue
 
             modify = True
             gelu_index += 1
-            gelu_node_name = 'gelu_node'+str(gelu_index)
+            gelu_node_name = 'bert_model/bert/encoder/TransformerEncoder/gelu_node'+str(gelu_index)
             gelu_node = onnx.helper.make_node('Gelu',
                                             name=gelu_node_name,
                                             inputs=[pow_node.input[0]],
@@ -288,67 +287,18 @@ def Tranformer_GELU_fusion(graph, mother_graph = None) :
             )
             graph.node.insert(node_index, gelu_node)
             print('set gelu node:', gelu_index)
+
+
             remove_node_list(graph, nodes_to_remove)
             break
+
+
         if not modify :
             break
-
-    if modify: 
-        return
-
-    while True :
-        modify = False
-        for node_index in len(graph.node) :
-            nodes_to_remove = []
-            div_node = graph.node[node_index]
-            if div_node.op_type != 'Div' :
-                continue
-            nodes_to_remove.append(div_node)
-
-            erf_node = get_node_from_input_name_and_op_type(graph, div_node.output[0], 'Erf')
-            if erf_node:
-                nodes_to_remove.append(erf_node)
-            else :
-                #print ('expect erf_node')
-                continue
-
-            add_node = get_node_from_input_name_and_op_type(graph, erf_node.output[0], 'Add')
-            if add_node :
-                nodes_to_remove.append(add_node)
-            else :
-                #print ('expect add_node')
-                continue
-
-            mul_node_1 = get_node_from_input_name_and_op_type(graph, add_node.output[0], 'Mul')
-            if mul_node_1 :
-                nodes_to_remove.append(mul_node_1)
-            else :
-                #print ('expect mul_node_1')
-                continue
-
-            mul_node_2 = get_node_from_input_name_and_op_type(graph, mul_node_1.output[0], 'Mul')
-            if mul_node_2 :
-                nodes_to_remove.append(mul_node_2)
-            else :
-                #print ('expect mul_node_2')
-                continue
-            modify = True
-            gelu_index += 1
-            gelu_node_name = 'gelu_node'+str(gelu_index)
-            gelu_node = onnx.helper.make_node('Gelu',
-                                            name=gelu_node_name,
-                                            inputs=[div_node.input[0]],
-                                            outputs=[mul_node_2.output[0]],
-            )
-            graph.node.insert(node_index, gelu_node)
-            print('set gelu node:', gelu_index)
-            remove_node_list(graph, nodes_to_remove)
-            break
-        if not modify :
-            break
-
-    
-
+    if gelu_index > 0 :
+        return True
+    else :
+        return False
 
 
 
@@ -407,7 +357,7 @@ def FF_optimize(graph, mother_graph = None) :
         for node_index in get_node_topology(graph, mother_graph=mother_graph) :
             nodes_to_remove = []
             ln_node = graph.node[node_index]
-            if ln_node.op_type != 'LayerNormalization' or ln_node.name == last_ln_node_name or get_node_from_input_name_and_op_type(graph, ln_node.output[0], 'MultiHeadAttention') is not None: 
+            if ln_node.op_type != 'LayerNorm' or ln_node.name == last_ln_node_name or get_node_from_input_name_and_op_type(graph, ln_node.output[0], 'MultiHeadAttention') is not None: 
                 continue
             x = ln_node.output[0] #原始保存输入
             y = ''
@@ -423,11 +373,11 @@ def FF_optimize(graph, mother_graph = None) :
             while queue :
                 node = queue.popleft()
                 Add_node = get_node_from_input_name_and_op_type(graph, node.output[0], 'Add')
-                if Add_node is not None and get_node_from_input_name_and_op_type(graph, Add_node.output[0], 'LayerNormalization') is not None:
+                if Add_node is not None and get_node_from_input_name_and_op_type(graph, Add_node.output[0], 'LayerNorm') is not None:
                     # the last node
                     y = node.output[0]
                     continue
-                elif get_node_from_input_name_and_op_type(graph, node.output[0], 'LayerNormalization') is not None:
+                elif get_node_from_input_name_and_op_type(graph, node.output[0], 'LayerNorm') is not None:
                     continue
                 elif node.op_type == 'MatMul':
                     reshape_node = get_node_from_input_name_and_op_type(graph, node.output[0], 'Reshape')
@@ -474,38 +424,6 @@ def FF_optimize(graph, mother_graph = None) :
 
 
 
-def recognise_node(name) :
-    name_list = name.split('/')
-    q_list = ['q', 'Q', 'query', 'Query', 'QUERY']
-    k_list = ['k', 'K', 'key', 'Key', 'KEY']
-    v_list = ['v', 'V', 'value', 'Value', 'VALUE']
-    out_list = ['output_transform', 'output']
-    find = False
-    ret = 0
-    for n in name_list :
-        if n in q_list:
-            if find:
-                print('can not recognise because node name is contained by more than one list')
-            find = True
-            ret = 1
-        elif n in k_list :
-            if find:
-                print('can not recognise because node name is contained by more than one list')
-            find = True
-            ret = 2
-        elif n in v_list :
-            if find:
-                print('can not recognise because node name is contained by more than one list')
-            find = True
-            ret = 3
-        elif n in out_list :
-            if find:
-                print('can not recognise because node name is contained by more than one list')
-            find = True
-            ret = 4
-    return ret
-
-
 def reverse_bfs(graph, start_outname, end_name = [], end_type = []) :
     visited_node = set()
     queue = collections.deque()
@@ -526,47 +444,61 @@ def reverse_bfs(graph, start_outname, end_name = [], end_type = []) :
                 visited_node.add(next_node.name)
     return False
 
-def Is_multihead_attention_start(graph, start_node) :
+def get_matmul_list(graph, start_node) :
+    start_list = get_node_list_from_input_name(graph, start_node.output[0])
+    if len(start_list) <= 2:
+        return None
+    res = []
+    for node in start_list:
+        if node.op_type == 'MatMul':
+            res.append(node)
+    if len(res) == 0:
+        return None
+    return res
+
+def recognize_qkv(matmul_node, graph):
     visited_node = set()
     queue = collections.deque()
-    start_list = get_node_list_from_input_name(graph, start_node.output[0])
+    start_list = get_node_list_from_input_name(graph, matmul_node.output[0])
     for node in start_list :
         queue.append(node)
         visited_node.add(node.name)
-
     while queue :
         node = queue.popleft()
-        if node.op_type == 'Add':
-            continue
-        elif node.op_type == 'MatMul' and recognise_node(node.name) in [1,2,3]:
-            return True
-        for next_node in get_node_list_from_input_name(graph, node.output[0]) :
-            if next_node.name not in visited_node :
-                queue.append(next_node)
-                visited_node.add(next_node.name)
-    return False
+        nex_list = get_node_list_from_input_name(graph, node.output[0])
+        for next_node in nex_list:
+            if next_node.op_type == 'MatMul':
+                if get_node_from_output_name_and_op_type(graph, next_node.input[0], 'Softmax'): # v
+                    return 2
+                elif node.output[0] == next_node.input[0]:                                      # q
+                    return 0
+                elif node.output[0] == next_node.input[1]:                                      # k
+                    return 1
 
-def get_last_ln_node_name(graph) :
-    last_ln_node_name = ''
-    max_ln_id = -1
-    for node in graph.node:
-        if node.op_type == 'LayerNormalization':
-            if int(node.name.split('_')[-1]) > max_ln_id:
-                max_ln_id = int(node.name.split('_')[-1])
-                last_ln_node_name = node.name
-    return last_ln_node_name
-
+            if next_node.op_type == 'LayerNorm':
+                raise(Exception('recognize_qkv fail 0'))
+            queue.append(next_node)
+            visited_node.add(next_node.name)
+    return -1
+            
+            
+            
 
 
+            
 
-def Multihead_attention_fusion_new(graph) :
+        
+
+
+
+def Multihead_attention_fusion(graph) :
     Multihead_attention_op_index = 0
     removed_node = set()
+    attn_type = 1 # 0 for nlp, 1 for cv
     #step1: make Multihead_attention's mask
     #key_padding_mask_bool: Multihead_attention needs the mask input like: [f,f,f,f,f,t,t,t], where t(True) is the padding token
     #key_padding_mask_float: this mask directly add to the input of softmax
     #key_padding_mask: the combination of two mask above
-
     key_padding_mask =  ''
     for node in graph.node:
         if node.op_type == 'Softmax' :
@@ -581,65 +513,27 @@ def Multihead_attention_fusion_new(graph) :
                 else:
                     key_padding_mask = mask_add_node.input[1]
                     warnings.warn('the key_mask_padding before softmax seems strange, check it!')
+                attn_type = 0
+                print('deal key_padding_mask ok')
             else:
                 warnings.warn('this transformer has no attn mask')
-            print('deal key_padding_mask ok')
             break
 
 
     #step3: BFS the MHA graph and get all the initialiser
     #the input usually is B,T,E, but the MHA needs T,B,E so we need two transpose nodes(in & out)
-    # first_trans_set = False
-    # last_trans_set = False
     while True :
         modify = False
         queue = collections.deque()
         for node_index in range(len(graph.node)):
             nodes_to_remove = []
             start_node = graph.node[node_index]
-            # if not first_trans_set:
-            #     print('insert trans_in node')
-            #     in_node_list = get_node_list_from_output_name(graph, start_node.input[0])
-            #     if len(in_node_list) :
-            #         for n in in_node_list:
-            #             n.output[0] = 'Transpose_in:in'
-            #     else:
-            #         raise Exception('in_node_list is empty')
-
-            #     first_trans_set = True
-            #     transpose_in_node = onnx.helper.make_node('Transpose'
-            #                         , name = 'Transpose_in'
-            #                         , inputs = ['Transpose_in:in']
-            #                         , outputs = [start_node.input[0]]
-            #                         )
-            #     transpose_in_node.attribute.insert(0, onnx.helper.make_attribute('perm', [1,0,2]))
-            #     graph.node.insert(node_index, transpose_in_node)
-            #     continue
-            # if start_node.name == last_ln_node_name and not last_trans_set:
-            #     print('insert trans_out node')
-            #     last_trans_set = True
-            #     transpose_out_node = onnx.helper.make_node('Transpose'
-            #                         , name = 'Transpose_out'
-            #                         , inputs = [last_ln_node_name+':0']
-            #                         , outputs = [start_node.output[0]]
-            #                         )
-            #     transpose_out_node.attribute.insert(0, onnx.helper.make_attribute('perm', [1,0,2]))
-            #     start_node.output[0] = last_ln_node_name+':0'
-            #     graph.node.insert(node_index+1, transpose_out_node)
-            #     continue
-
-            if not Is_multihead_attention_start(graph, start_node):
+            matmul_list = get_matmul_list(graph, start_node)
+            if matmul_list is None :
                 continue
-
             x = start_node.output[0]
             Multihead_attention_op_index += 1
             print ('fuse multi-head attention op : %d', Multihead_attention_op_index)
-
-            for node in get_node_list_from_input_name(graph, x):
-                if node.op_type != 'Add' :
-                    removed_node.add(node.name)
-                    queue.append(node)
-                    nodes_to_remove.append(node)
 
             in_project_weight = ''
             in_project_bias = ''
@@ -648,393 +542,190 @@ def Multihead_attention_fusion_new(graph) :
             gamma = ''
             temperature = ''
             y = ''
-            num_head = None
-            l2_norm = False
-            check_ok = True
+            num_heads = None
+            l2norm = False
+            
 
-            # query_bias = None
-            # key_bias = None
-            # value_bias = None
+            query_weight = None
+            key_weight = None
+            value_weight = None
+            query_bias = None
+            key_bias = None
+            value_bias = None
             found_num_head = False
-            while queue :
-                node = queue.popleft()
-                is_last_node = False
-                Add_node = get_node_from_input_name_and_op_type(graph, node.output[0], 'Add')
-                if Add_node is not None and node.op_type == 'Mul':
-                    # the last node
-                    y = node.output[0]
-                    is_last_node = True
-                    if is_initializer(graph, node.input[0]):
-                        gamma = node.input[0]
+            qkv_matmul_list = [None, None, None]
+
+            if len(matmul_list) == 1:
+                matmul_node = matmul_list[0]
+                if is_initializer(graph, matmul_node.input[1]):
+                    in_project_weight = matmul_node.input[1]
+                    in_project_weight_np = get_initializer_constant_numpy_value(graph, in_project_weight)
+                    if in_project_weight_np.shape[0] * 3 != in_project_weight_np.shape[1]:
+                        continue
+            elif len(matmul_list) == 3:
+                for matmul_node in matmul_list:
+                    id = recognize_qkv(matmul_node, graph)
+                    #pdb.set_trace()
+                    if id < 0 or qkv_matmul_list[id]:
+                        raise(Exception('recognize_qkv fail 1'))
+                    qkv_matmul_list[id] = matmul_node
+
+                q_matmul = qkv_matmul_list[0]
+                k_matmul = qkv_matmul_list[1]
+                v_matmul = qkv_matmul_list[2]
+                if is_initializer(graph, q_matmul.input[1]):
+                    query_weight = get_initializer_constant_numpy_value(graph, q_matmul.input[1])
+                else:
+                    raise(Exception("can not find query_weight"))
+                if is_initializer(graph, k_matmul.input[1]):
+                    key_weight = get_initializer_constant_numpy_value(graph, k_matmul.input[1])
+                else:
+                    raise(Exception("can not find key_weight"))
+                if is_initializer(graph, v_matmul.input[1]):
+                    value_weight = get_initializer_constant_numpy_value(graph, v_matmul.input[1])
+                else:
+                    raise(Exception("can not find value_weight"))
+
+                q_bias = get_node_from_input_name_and_op_type(graph, q_matmul.output[0], 'Add')
+                k_bias = get_node_from_input_name_and_op_type(graph, k_matmul.output[0], 'Add')
+                v_bias = get_node_from_input_name_and_op_type(graph, v_matmul.output[0], 'Add')
+                if q_bias and k_bias and v_bias:
+                    if is_initializer(graph, q_bias.input[0]):
+                        query_bias = get_initializer_constant_numpy_value(graph, q_bias.input[0])
+                    elif is_initializer(graph, q_bias.input[1]):
+                        query_bias = get_initializer_constant_numpy_value(graph, q_bias.input[1])
                     else:
-                        check_ok = False
-                        print ('gamma is not init')
-                        break
-                elif node.op_type == 'ReduceL2':
-                    l2_norm = True
-                elif node.op_type == 'Mul' and get_node_from_input_name_and_op_type(graph, node.output[0], 'Softmax'):
-                    if is_initializer(graph, node.input[1]):
-                        temperature = node.input[1]
+                        raise(Exception("can not find q bias"))
+
+                    if is_initializer(graph, k_bias.input[0]):
+                        key_bias = get_initializer_constant_numpy_value(graph, k_bias.input[0])
+                    elif is_initializer(graph, k_bias.input[1]):
+                        key_bias = get_initializer_constant_numpy_value(graph, k_bias.input[1])
                     else:
-                        check_ok = False
-                        print ('temperature is not init')
-                        break
-                elif node.op_type == 'Concat' and len(node.input) == 5 and not found_num_head:
-                    num_heads_const_name = node.input[3]
-                    if is_initializer(graph, num_heads_const_name) :
-                        num_heads_numpy = get_initializer_numpy_value(graph, num_heads_const_name)
-                        num_head = int(num_heads_numpy)
-                        found_num_head = True
+                        raise(Exception("can not find k bias"))
+
+                    if is_initializer(graph, v_bias.input[0]):
+                        value_bias = get_initializer_constant_numpy_value(graph, v_bias.input[0])
+                    elif is_initializer(graph, v_bias.input[1]):
+                        value_bias = get_initializer_constant_numpy_value(graph, v_bias.input[1])
                     else:
-                        raise(Exception("num heads is None"))
-                    
-
-                elif node.op_type == 'MatMul' and node.input[0] == x:
-                    if is_initializer(graph, node.input[1]) :
-                        in_project_weight = node.input[1]
-                    else:
-                        check_ok = False
-                        print ('in_project_weight is not init')
-                        break
-
-                elif node.op_type == 'MatMul' and  get_node_from_output_name_and_op_type(graph, node.input[0], 'Reshape'):
-                    if is_initializer(graph, node.input[1]) :
-                        out_project_weight = node.input[1]
-                    else:
-                        check_ok = False
-                        print ('out_project_weight is not init')
-                        break
-
-                    #query_weight = get_initializer_numpy_value(target_graph, node.input[1])
-                # elif node.op_type == 'MatMul' and recognise_node(node.name) == 2 :
-                #     if is_initializer(graph, node.input[1]) :
-                #         target_graph = graph
-                #     else:
-                #         check_ok = False
-                #         print ('key_weight is not init')
-                #         break
-                #     key_weight = get_initializer_numpy_value(target_graph, node.input[1])
-
-                # elif node.op_type == 'MatMul' and recognise_node(node.name) == 3 :
-                #     if is_initializer(graph, node.input[1]) :
-                #         target_graph = graph
-                #     else:
-                #         check_ok = False
-                #         print ('value_weight is not init')
-                #         break
-                #     value_weight = get_initializer_numpy_value(target_graph, node.input[1])
-                elif node.op_type == 'Add' and get_node_from_output_name_and_op_type(graph, node.input[0], 'MatMul'):
-                    matmul_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'MatMul')
-                    if matmul_node.input[0] == x:
-                        if is_initializer(graph, node.input[1]) :
-                            in_project_bias = node.input[1]
-                        else:
-                            check_ok = False
-                            print ('in_project_bias is not init')
-                            break
-                    else:
-                        if is_initializer(graph, node.input[1]) :
-                            out_project_bias = node.input[1]
-                        else:
-                            check_ok = False
-                            print ('out_project_bias is not init')
-                            break
-
-                    #query_bias = get_initializer_numpy_value(target_graph, node.input[1])
-                # elif node.op_type == 'Add' and recognise_node(node.name) == 2 :
-                #     if is_initializer(graph, node.input[1]) :
-                #         target_graph = graph
-                #     else:
-                #         check_ok = False
-                #         print ('key_bias is not init')
-                #         break
-                #     key_bias = get_initializer_numpy_value(target_graph, node.input[1])
-                # elif node.op_type == 'Add' and recognise_node(node.name) == 3 :
-                #     if is_initializer(graph, node.input[1]) :
-                #         target_graph = graph
-                #     else:
-                #         check_ok = False
-                #         print ('value_bias is not init')
-                #         break
-                #     value_bias = get_initializer_numpy_value(target_graph, node.input[1])
-                # elif node.op_type == 'MatMul' and recognise_node(node.name) == 4 :
-                #     if is_initializer(graph, node.input[1]) :
-                #         target_graph = graph
-                #     else:
-                #         check_ok = False
-                #         print ('out_project_weight is not init')
-                #         break
-                #     out_project_weight = node.input[1]
-                # elif node.op_type == 'Add' and recognise_node(node.name) == 4 :
-                #     if is_initializer(graph, node.input[1]) :
-                #         target_graph = graph
-                #     else:
-                #         check_ok = False
-                #         print ('out_project_bias is not init')
-                #         break
-                #     out_project_bias = node.input[1]
-                if is_last_node == True:
-                  continue
-                for next_node in get_node_list_from_input_name(graph, node.output[0]) :
-                    if next_node.name not in removed_node :
-                        queue.append(next_node)
-                        removed_node.add(next_node.name)
-                        nodes_to_remove.append(next_node)
-            if check_ok :
-                modify = True
-                # in_project_weight_cat = np.concatenate((query_weight, key_weight, value_weight), axis=1)
-                # in_project_weight_init = onnx.helper.make_tensor('in_project_weight'+str(Multihead_attention_op_index), TensorProto.FLOAT, list(in_project_weight_cat.shape), in_project_weight_cat.reshape(-1).tolist())
-                # append_initializer(graph, in_project_weight_init)
-                # if query_bias is None or key_bias is None or value_bias is None :
-                #     pass
-                # else :
-                #     in_project_bias = 'in_project_bias' + str(Multihead_attention_op_index)
-                #     in_project_bias_cat = np.concatenate((query_bias, key_bias, value_bias), axis=0)
-                #     in_project_bias_init = onnx.helper.make_tensor('in_project_bias'+str(Multihead_attention_op_index), TensorProto.FLOAT , list(in_project_bias_cat.shape), in_project_bias_cat.reshape(-1).tolist())
-                #     append_initializer(graph, in_project_bias_init)
-
-                Multihead_attention_node = onnx.helper.make_node('MultiHeadAttention'
-                                                    , name = 'MultiHeadAttention_' + str(Multihead_attention_op_index)
-                                                    , inputs = [x, in_project_weight, in_project_bias, out_project_weight, out_project_bias, gamma, temperature]
-                                                    , outputs = [y]
-                                                    )
-                Multihead_attention_node.domain = 'pmx'
-                Multihead_attention_node.attribute.insert(0, onnx.helper.make_attribute("num_head", num_head, "num of heads"))
-                Multihead_attention_node.attribute.insert(1, onnx.helper.make_attribute("l2_norm", l2_norm, "L2Norm or not"))
-                start_index = get_node_index(graph, start_node)
-                print('set Multihead_attention_node on start_node next pos: ', start_index)
-                graph.node.insert(start_index+1, Multihead_attention_node)
-                remove_node_list(graph, nodes_to_remove)
-                break
-
-
-        if not modify :
-            break
-
-
-
-
-def Multihead_attention_fusion(graph) :
-    Multihead_attention_op_index = 0
-    removed_node = set()
-    #step1: make Multihead_attention's mask
-    #key_padding_mask_bool: Multihead_attention needs the mask input like: [f,f,f,f,f,t,t,t], where t(True) is the padding token
-    #key_padding_mask_float: this mask directly add to the input of softmax
-    #key_padding_mask: the combination of two mask above
-
-    # key_padding_mask =  ''
-    # for node in graph.node:
-    #     if node.op_type == 'Softmax' :
-    #         mask_add_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'Add')
-    #         if mask_add_node is not None:
-    #             l1 = get_node_list_from_input_name(graph, mask_add_node.input[0])
-    #             l2 = get_node_list_from_input_name(graph, mask_add_node.input[1])
-    #             if len(l1) > 1 and len(l2) == 1:
-    #                 key_padding_mask = mask_add_node.input[0]
-    #             elif len(l1) == 1 and len(l2) > 1:
-    #                 key_padding_mask = mask_add_node.input[1]
-    #             else:
-    #                 key_padding_mask = mask_add_node.input[1]
-    #                 warnings.warn('the key_mask_padding before softmax seems strange, check it!')
-    #         else:
-    #             raise(Exception('can not find key_mask_padding_bool, time to update the fusion code'))
-    #         print('deal key_padding_mask ok')
-    #         break
-
-    #step2: find the last LN node in advance so that can insert output transpose node
-    # last_ln_node_name = get_last_ln_node_name(graph)
-    # print('last ln node:', last_ln_node_name)
-
-
-    #step3: BFS the MHA graph and get all the initialiser
-    #the input usually is B,T,E, but the MHA needs T,B,E so we need two transpose nodes(in & out)
-    # first_trans_set = False
-    # last_trans_set = False
-    while True :
-        modify = False
-        queue = collections.deque()
-        for node_index in range(len(graph.node)):
-            nodes_to_remove = []
-            start_node = graph.node[node_index]
-            # if not first_trans_set:
-            #     print('insert trans_in node')
-            #     in_node_list = get_node_list_from_output_name(graph, start_node.input[0])
-            #     if len(in_node_list) :
-            #         for n in in_node_list:
-            #             n.output[0] = 'Transpose_in:in'
-            #     else:
-            #         raise Exception('in_node_list is empty')
-
-            #     first_trans_set = True
-            #     transpose_in_node = onnx.helper.make_node('Transpose'
-            #                         , name = 'Transpose_in'
-            #                         , inputs = ['Transpose_in:in']
-            #                         , outputs = [start_node.input[0]]
-            #                         )
-            #     transpose_in_node.attribute.insert(0, onnx.helper.make_attribute('perm', [1,0,2]))
-            #     graph.node.insert(node_index, transpose_in_node)
-            #     continue
-            # if start_node.name == last_ln_node_name and not last_trans_set:
-            #     print('insert trans_out node')
-            #     last_trans_set = True
-            #     transpose_out_node = onnx.helper.make_node('Transpose'
-            #                         , name = 'Transpose_out'
-            #                         , inputs = [last_ln_node_name+':0']
-            #                         , outputs = [start_node.output[0]]
-            #                         )
-            #     transpose_out_node.attribute.insert(0, onnx.helper.make_attribute('perm', [1,0,2]))
-            #     start_node.output[0] = last_ln_node_name+':0'
-            #     graph.node.insert(node_index+1, transpose_out_node)
-            #     continue
-
-            if not Is_multihead_attention_start(graph, start_node):
+                        raise(Exception("can not find v bias"))
+            else:
                 continue
+            
 
-            x = start_node.output[0]
-            Multihead_attention_op_index += 1
-            print ('fuse multi-head attention op : %d', Multihead_attention_op_index)
-
-            for node in get_node_list_from_input_name(graph, x):
+            for node in get_node_list_from_input_name(graph, x) :  # skip add
                 if node.op_type != 'Add' :
                     removed_node.add(node.name)
                     queue.append(node)
                     nodes_to_remove.append(node)
 
-            in_project_weight = ''
-            in_project_bias = ''
-            out_project_weight = ''
-            out_project_bias = ''
-            gamma = ''
-            temperature = ''
-            y = ''
-            num_head = None
-            l2_norm = False
-            check_ok = True
-
-            # query_bias = None
-            # key_bias = None
-            # value_bias = None
-            found_num_head = False
+            
             while queue :
                 node = queue.popleft()
-                is_last_node = False
                 Add_node = get_node_from_input_name_and_op_type(graph, node.output[0], 'Add')
-                if Add_node is not None and node.op_type == 'Mul':
+                if Add_node and get_node_from_input_name_and_op_type(graph, Add_node.output[0], 'LayerNorm') is not None:
                     # the last node
                     y = node.output[0]
-                    is_last_node = True
-                    if is_initializer(graph, node.input[0]):
-                        gamma = node.input[0]
-                    else:
-                        check_ok = False
-                        print ('gamma is not init')
-                        break
+                    if node.op_type == 'Mul':
+                        if is_initializer(graph, node.input[0]):
+                            gamma = node.input[0]
+                        elif is_initializer(graph, node.input[1]):
+                            gamma = node.input[1]
+                    continue
+
+                if get_node_from_output_name_and_op_type(graph, node.input[0], 'LayerNorm') is not None:
+                    #sometime the MHA sub_graph will extend some node out(like reshape), when it happens, stop the bfs and connect the graph 
+                    ln_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'LayerNorm')
+                    if not node_eq(ln_node, start_node):
+                        ln_node.output[0] = node.output[0]
+                        continue
                 elif node.op_type == 'ReduceL2':
-                    l2_norm = True
+                    l2norm = True
                 elif node.op_type == 'Mul' and get_node_from_input_name_and_op_type(graph, node.output[0], 'Softmax'):
-                    if is_initializer(graph, node.input[1]):
+                    if is_initializer(graph, node.input[0]):
+                        temperature = node.input[0]
+                    elif is_initializer(graph, node.input[1]):
                         temperature = node.input[1]
-                    else:
-                        check_ok = False
-                        print ('temperature is not init')
-                        break
-                elif node.op_type == 'Concat' and len(node.input) == 5 and not found_num_head:
-                    num_heads_const_name = node.input[3]
+                elif node.op_type == 'Concat' and len(node.input) >= 4 and not found_num_head:
+                    num_heads_const_name = node.input[-2]
                     if is_initializer(graph, num_heads_const_name) :
-                        num_heads_numpy = get_initializer_numpy_value(graph, num_heads_const_name)
-                        num_head = int(num_heads_numpy)
-                        found_num_head = True
+                        target_graph = graph
                     else:
                         raise(Exception("num heads is None"))
-                    
+                    num_heads_numpy = get_initializer_constant_numpy_value(target_graph, num_heads_const_name)
+                    num_heads = int(num_heads_numpy)
+                    found_num_head = True
 
-                elif node.op_type == 'MatMul' and node.input[0] == x:
-                    if is_initializer(graph, node.input[1]) :
-                        in_project_weight = node.input[1]
+                elif node.op_type == 'MatMul' and is_initializer(graph, node.input[1]) and get_node_from_output_name_and_op_type(graph, node.input[0], 'LayerNorm') is None:
+                    out_project_weight = node.input[1]
+                    out_add_node = get_node_from_input_name_and_op_type(graph, node.output[0], 'Add')
+                    if is_initializer(graph, out_add_node.input[0]):
+                        out_project_bias = out_add_node.input[0]
+                    elif is_initializer(graph, out_add_node.input[1]):
+                        out_project_bias = out_add_node.input[1]
                     else:
-                        check_ok = False
-                        print ('in_project_weight is not init')
-                        break
+                        raise(Exception("can not find out_project_bias"))
 
-                elif node.op_type == 'MatMul' and  get_node_from_output_name_and_op_type(graph, node.input[0], 'Reshape'):
-                    if is_initializer(graph, node.input[1]) :
-                        out_project_weight = node.input[1]
-                    else:
-                        check_ok = False
-                        print ('out_project_weight is not init')
-                        break
-
-                elif node.op_type == 'Add' and get_node_from_output_name_and_op_type(graph, node.input[0], 'MatMul'):
-                    matmul_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'MatMul')
-                    if matmul_node.input[0] == x:
-                        if is_initializer(graph, node.input[1]) :
-                            in_project_bias = node.input[1]
-                        else:
-                            check_ok = False
-                            print ('in_project_bias is not init')
-                            break
-                    else:
-                        if is_initializer(graph, node.input[1]) :
-                            out_project_bias = node.input[1]
-                        else:
-                            check_ok = False
-                            print ('out_project_bias is not init')
-                            break
-
-                if is_last_node == True:
-                  continue
                 for next_node in get_node_list_from_input_name(graph, node.output[0]) :
                     if next_node.name not in removed_node :
                         queue.append(next_node)
                         removed_node.add(next_node.name)
                         nodes_to_remove.append(next_node)
-            if check_ok :
-                modify = True
-                # in_project_weight_cat = np.concatenate((query_weight, key_weight, value_weight), axis=1)
-                # in_project_weight_init = onnx.helper.make_tensor('in_project_weight'+str(Multihead_attention_op_index), TensorProto.FLOAT, list(in_project_weight_cat.shape), in_project_weight_cat.reshape(-1).tolist())
-                # append_initializer(graph, in_project_weight_init)
-                # if query_bias is None or key_bias is None or value_bias is None :
-                #     pass
-                # else :
-                #     in_project_bias = 'in_project_bias' + str(Multihead_attention_op_index)
-                #     in_project_bias_cat = np.concatenate((query_bias, key_bias, value_bias), axis=0)
-                #     in_project_bias_init = onnx.helper.make_tensor('in_project_bias'+str(Multihead_attention_op_index), TensorProto.FLOAT , list(in_project_bias_cat.shape), in_project_bias_cat.reshape(-1).tolist())
-                #     append_initializer(graph, in_project_bias_init)
 
-                Multihead_attention_node = onnx.helper.make_node('MultiHeadAttention'
-                                                    , name = 'MultiHeadAttention_' + str(Multihead_attention_op_index)
-                                                    , inputs = [x, in_project_weight, in_project_bias, out_project_weight, out_project_bias, gamma, temperature]
-                                                    , outputs = [y]
-                                                    )
-                Multihead_attention_node.domain = 'pmx'
-                Multihead_attention_node.attribute.insert(0, onnx.helper.make_attribute("num_head", num_head, "num of heads"))
-                Multihead_attention_node.attribute.insert(1, onnx.helper.make_attribute("l2_norm", l2_norm, "L2Norm or not"))
-                start_index = get_node_index(graph, start_node)
-                print('set Multihead_attention_node on start_node next pos: ', start_index)
-                graph.node.insert(start_index+1, Multihead_attention_node)
-                remove_node_list(graph, nodes_to_remove)
-                break
+            modify = True
+            if query_weight is not None and key_weight is not None and value_weight is not None:
+                in_project_weight = 'in_project_weight'+str(Multihead_attention_op_index)
+                in_project_weight_cat = np.concatenate((query_weight, key_weight, value_weight), axis=1)
+                in_project_weight_init = onnx.helper.make_tensor('in_project_weight'+str(Multihead_attention_op_index), TensorProto.FLOAT, list(in_project_weight_cat.shape), in_project_weight_cat.reshape(-1).tolist())
+                append_initializer(graph, in_project_weight_init)
+                
+            if query_bias is not None and key_bias is not None and value_bias is not None :
+                in_project_bias = 'in_project_bias' + str(Multihead_attention_op_index)
+                in_project_bias_cat = np.concatenate((query_bias, key_bias, value_bias), axis=0)
+                in_project_bias_init = onnx.helper.make_tensor('in_project_bias'+str(Multihead_attention_op_index), TensorProto.FLOAT , list(in_project_bias_cat.shape), in_project_bias_cat.reshape(-1).tolist())
+                append_initializer(graph, in_project_bias_init)
+
+            Multihead_attention_node = onnx.helper.make_node('MultiHeadAttention'
+                                                , name = 'MultiHeadAttention_' + str(Multihead_attention_op_index)
+                                                , inputs = [x, key_padding_mask, in_project_weight, in_project_bias, out_project_weight, out_project_bias, temperature, gamma]
+                                                , outputs = [y]
+                                                )
+            Multihead_attention_node.attribute.insert(0, onnx.helper.make_attribute("num_heads", num_heads, "num of heads"))
+            Multihead_attention_node.attribute.insert(1, onnx.helper.make_attribute("l2norm", l2norm, "l2norm or not"))
+            Multihead_attention_node.attribute.insert(2, onnx.helper.make_attribute("attn_type", attn_type, "attn_type, 0 for nlp, 1 for cv"))
+            start_index = get_node_index(graph, start_node)
+            print('set Multihead_attention_node on start_node next pos: ', start_index)
+            graph.node.insert(start_index+1, Multihead_attention_node)
+            remove_node_list(graph, nodes_to_remove)
+            break
 
 
         if not modify :
             break
-
-
-
-
-
 
 
 def layer_normal_fusion_general(graph, mother_graph = None) :
+    nodes_to_remove = []
 
     for node in graph.node:
         if node.op_type == "Identity":
-            if len(node.output) == 1 and len(node.input) == 1 and is_initializer(graph, node.input[0]):
+            if is_initializer(graph, node.input[0]):
+                if len(node.input) != 1 or len(node.output) != 1:
+                    pdb.set_trace()
+                init_name = node.input[0]
                 next_list = get_node_list_from_input_name(graph, node.output[0])
                 for n_node in next_list:
                     for i in range(len(n_node.input)):
                         if n_node.input[i] == node.output[0]:
-                            n_node.input[i] = node.input[0]
+                            n_node.input[i] = init_name
+                nodes_to_remove.append(node)
+            # else:
+            #     print(node.input[0])
+            #     pdb.set_trace()
+    remove_node_list(graph, nodes_to_remove)
+
+    
     layer_normal_op_index = 0
     visited_node = set()
     while True :
@@ -1062,6 +753,7 @@ def layer_normal_fusion_general(graph, mother_graph = None) :
             while queue :
                 node = queue.popleft()
                 if is_layernorm_end(graph, node):
+                    #pdb.set_trace()
                     if is_initializer(graph, node.input[1], mother_graph) :
                         bias = node.input[1]
                     else :
@@ -1069,6 +761,7 @@ def layer_normal_fusion_general(graph, mother_graph = None) :
                         # if identity_node and is_initializer(graph, identity_node.input[0], mother_graph):
                         #     bias = identity_node.input[0]
                         # else :
+                        pdb.set_trace()
                         raise(Exception("last node has no bias"))
                     y = node.output[0]
                     continue
@@ -1108,7 +801,7 @@ def layer_normal_fusion_general(graph, mother_graph = None) :
                                                     )
             layer_norm_node.domain = "pmx"
             layer_norm_node.attribute.insert(0, onnx.helper.make_attribute("axes", axes, "axes"))
-            #layer_norm_node.attribute.insert(1, onnx.helper.make_attribute("elementwise_affine", 1, "elementwise_affine"))
+            layer_norm_node.attribute.insert(1, onnx.helper.make_attribute("elementwise_affine", 1, "elementwise_affine"))
             layer_norm_node.attribute.insert(1, onnx.helper.make_attribute("eps", eps, "eps for layer normal"))
             graph.node.insert(node_index, layer_norm_node)
             remove_node_list(graph, nodes_to_remove)
@@ -1176,11 +869,11 @@ def Tranformer_fusion(graph):
 
 
 def JudgeLastNode(graph, node) :
-    if node.op_type != 'Add' or get_node_from_input_name_and_op_type(graph, node.output[0], 'LayerNormalization') is None :
+    if node.op_type != 'Add' or get_node_from_input_name_and_op_type(graph, node.output[0], 'LayerNorm') is None :
         return False
-    if get_node_from_input_name_and_op_type(graph, node.input[1], 'LayerNormalization') :
+    if get_node_from_input_name_and_op_type(graph, node.input[1], 'LayerNorm') :
         start_outname = node.input[0]
-    elif get_node_from_input_name_and_op_type(graph, node.input[0], 'LayerNormalization') :
+    elif get_node_from_input_name_and_op_type(graph, node.input[0], 'LayerNorm') :
         start_outname = node.input[1]
     else :
         raise Exception('something wrong with skip add node')
@@ -1292,7 +985,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
         for node_index in get_node_topology(graph, mother_graph) :
             nodes_to_remove = []
             start_node = graph.node[node_index]
-            if start_node.op_type != 'LayerNormalization':
+            if start_node.op_type != 'LayerNorm':
                 continue
             if not first_trans_set:
                 print('insert trans_in node')
@@ -1325,7 +1018,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                 graph.node.insert(node_index+1, transpose_out_node)
                 continue
 
-            if not Is_multihead_attention_start(graph, start_node):
+            if not get_matmul_list(graph, start_node):
                 continue
             x = start_node.input[0]
             decoder_transformer_op_index += 1
@@ -1349,13 +1042,13 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                     # the last node
                     y = node.output[0]
                     is_last_node = True
-                if get_node_from_output_name_and_op_type(graph, node.input[0], 'LayerNormalization') is not None:
+                if get_node_from_output_name_and_op_type(graph, node.input[0], 'LayerNorm') is not None:
                     #sometime the MHA sub_graph will extend some node out(like reshape), when it happens, stop the bfs and connect the graph 
-                    ln_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'LayerNormalization')
+                    ln_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'LayerNorm')
                     if ln_node.name == last_ln_node_name:
                         ln_node.output[0] = node.output[0]
                         continue
-                elif node.op_type == 'LayerNormalization' :
+                elif node.op_type == 'LayerNorm' :
                     if int(node.name.split('_')[-1]) % 3 == 1 :
                         input_normal_wei = node.input[1]
                         input_normal_bias = node.input[2]
@@ -1395,7 +1088,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                         check_ok = False
                         print ('query_weight is not init')
                         break
-                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNormalization'])
+                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNorm'])
                     assert(ln_above != False)
                     if int(ln_above.name.split('_')[-1]) % 3 == 1 :
                         query_weight = get_initializer_constant_numpy_value(target_graph, node.input[1])
@@ -1412,7 +1105,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                         check_ok = False
                         print ('key_weight is not init')
                         break
-                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNormalization'])
+                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNorm'])
                     assert(ln_above != False)
                     assert(int(ln_above.name.split('_')[-1]) % 3 == 1)
                     key_weight = get_initializer_constant_numpy_value(target_graph, node.input[1])
@@ -1425,7 +1118,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                         check_ok = False
                         print ('value_weight is not init')
                         break
-                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNormalization'])
+                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNorm'])
                     assert(ln_above != False)
                     assert(int(ln_above.name.split('_')[-1]) % 3 == 1)
                     value_weight = get_initializer_constant_numpy_value(target_graph, node.input[1])
@@ -1438,7 +1131,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                         check_ok = False
                         print ('query_bias is not init')
                         break
-                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNormalization'])
+                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNorm'])
                     assert(ln_above != False)
                     if int(ln_above.name.split('_')[-1]) % 3 == 1 :
                         query_bias = get_initializer_constant_numpy_value(target_graph, node.input[1])
@@ -1455,7 +1148,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                         check_ok = False
                         print ('key_bias is not init')
                         break
-                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNormalization'])
+                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNorm'])
                     assert(ln_above != False)
                     assert(int(ln_above.name.split('_')[-1]) % 3 == 1)
                     key_bias = get_initializer_constant_numpy_value(target_graph, node.input[1])
@@ -1468,7 +1161,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                         check_ok = False
                         print ('value_bias is not init')
                         break
-                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNormalization'])
+                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNorm'])
                     assert(ln_above != False)
                     assert(int(ln_above.name.split('_')[-1]) % 3 == 1)
                     value_bias = get_initializer_constant_numpy_value(target_graph, node.input[1])
@@ -1482,7 +1175,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                         check_ok = False
                         print ('out_project_weight is not init')
                         break
-                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNormalization'])
+                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNorm'])
                     assert(ln_above != False)
                     if int(ln_above.name.split('_')[-1]) % 3 == 1 :
                         out_project_weight1 = node.input[1]
@@ -1499,7 +1192,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                         check_ok = False
                         print ('out_project_bias is not init')
                         break
-                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNormalization'])
+                    ln_above = reverse_bfs(graph, node.output[0], end_type=['LayerNorm'])
                     assert(ln_above != False)
                     if int(ln_above.name.split('_')[-1]) % 3 == 1 :
                         out_project_bias1 = node.input[1]
@@ -1516,7 +1209,7 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                     elif get_node_from_input_name_and_op_type(graph, node.output[0], 'Reshape') is not None :
                         history_K = node.input[0]
                         history_K_out = node.output[0]
-                elif node.op_type == 'MatMul' and int(reverse_bfs(graph, node.output[0], end_type=['LayerNormalization']).name[-1]) % 3 == 2 :
+                elif node.op_type == 'MatMul' and int(reverse_bfs(graph, node.output[0], end_type=['LayerNorm']).name[-1]) % 3 == 2 :
                     # find encoder K, V
                     if get_node_from_output_name_and_op_type(graph, node.input[0], 'Softmax') is not None :
                         reshape_node = get_node_from_output_name_and_op_type(graph, node.input[1], 'Reshape')
@@ -1528,12 +1221,12 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
                             reshape_node2 = get_node_from_output_name_and_op_type(graph, reshape_node1.input[0], 'Reshape')
                             if reshape_node2 is not None and reshape_node2.input[0].find('Identity') != -1 :
                                 encoder_K = reshape_node2.output[0]
-                elif node.op_type == 'MatMul' and int(reverse_bfs(graph, node.output[0], end_type=['LayerNormalization']).name[-1]) % 3 == 0 :
+                elif node.op_type == 'MatMul' and int(reverse_bfs(graph, node.output[0], end_type=['LayerNorm']).name[-1]) % 3 == 0 :
                     if not found_activation :
                         ff_weight1 = node.input[1]
                     else :
                         ff_weight2 = node.input[1]
-                elif node.op_type == 'Add' and int(reverse_bfs(graph, node.output[0], end_type=['LayerNormalization']).name[-1]) % 3 == 0 :
+                elif node.op_type == 'Add' and int(reverse_bfs(graph, node.output[0], end_type=['LayerNorm']).name[-1]) % 3 == 0 :
                     if not found_activation :
                         ff_bias1 = node.input[1]
                     else :
@@ -1583,18 +1276,17 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
 
 def main() :
 
-    input_file = 'C:\yangyuehang\桌面\onnx_model\\bert.onnx'
+    input_file = '/mnt/hpc/share/xusi/unifold/evoformer_48_dym.onnx'
     out_file = ''
     if len(sys.argv) > 2 :
         input_file = sys.argv[1]
         out_file = sys.argv[2]
     else :
-        out_file = 'C:\yangyuehang\桌面\onnx_model\\bert-new.onnx'
+        out_file = '/mnt/hpc/share/yyh/evoformer/evoformer_48_dym-new.onnx'
 
 
     add_pmx = True
     model = onnx.load(input_file)
-    model.opset_import[0].version = 12
 
     for ot in model.opset_import:
         if ot.domain == 'pmx':
@@ -1609,8 +1301,9 @@ def main() :
     #fix_MatrixBandPart(model.graph)
     #fix_graph(model.graph)
 
-    layer_normal_fusion_general(model.graph)
-    get_node_topology(model.graph, None)
+    #layer_normal_fusion_general(model.graph)
+    Multihead_attention_fusion(model.graph)
+    #get_node_topology(model.graph, None)
 
 
     #remove_Transpose2(model.graph)
