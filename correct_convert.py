@@ -221,7 +221,7 @@ def Tranformer_GELU_fusion(graph, mother_graph = None) :
     gelu_index = 0
     while True :
         modify = False
-        for node_index in get_node_topology(graph, mother_graph=mother_graph) :
+        for node_index in range(len(graph.node)) :
             nodes_to_remove = []
             pow_node = graph.node[node_index]
             if pow_node.op_type != 'Pow' :
@@ -232,73 +232,127 @@ def Tranformer_GELU_fusion(graph, mother_graph = None) :
             if mul_node_1 is not None :
                 nodes_to_remove.append(mul_node_1)
             else :
-                print ('expect mul_node_1')
+                #print ('expect mul_node_1')
                 continue
 
             add_node_1 = get_node_from_input_name_and_op_type(graph, mul_node_1.output[0], 'Add')
             if add_node_1 is not None :
                 nodes_to_remove.append(add_node_1)
             else :
-                print ('expect add_node')
+                #print ('expect add_node')
                 continue
 
             mul_node_2 = get_node_from_input_name_and_op_type(graph, add_node_1.output[0], 'Mul')
             if mul_node_2 is not None :
                 nodes_to_remove.append(mul_node_2)
             else :
-                print ('expect mul_node_2')
+                #print ('expect mul_node_2')
                 continue
 
             tanh_node = get_node_from_input_name_and_op_type(graph, mul_node_2.output[0], 'Tanh')
             if tanh_node is not None :
                 nodes_to_remove.append(tanh_node)
             else :
-                print ('expect tanh_node')
+                #print ('expect tanh_node')
                 continue
 
             add_node_2 = get_node_from_input_name_and_op_type(graph, tanh_node.output[0], 'Add')
             if add_node_2 is not None :
                 nodes_to_remove.append(add_node_2)
             else :
-                print ('expect add_node_2')
+                #print ('expect add_node_2')
                 continue
 
             mul_node_3 = get_node_from_input_name_and_op_type(graph, add_node_2.output[0], 'Mul')
             if mul_node_3 is not None :
                 nodes_to_remove.append(mul_node_3)
             else :
-                print ('expect mul_node_3')
+                #print ('expect mul_node_3')
                 continue
 
             mul_node_4 = get_node_from_input_name_and_op_type(graph, mul_node_3.output[0], 'Mul')
             if mul_node_4 is not None :
                 nodes_to_remove.append(mul_node_4)
             else :
-                print ('expect mul_node_4')
+                #print ('expect mul_node_4')
                 continue
 
             modify = True
             gelu_index += 1
-            gelu_node_name = 'bert_model/bert/encoder/TransformerEncoder/gelu_node'+str(gelu_index)
-            gelu_node = onnx.helper.make_node('Gelu',
+            gelu_node_name = 'gelu_node'+str(gelu_index)
+            gelu_node = onnx.helper.make_node('GELU',
                                             name=gelu_node_name,
                                             inputs=[pow_node.input[0]],
                                             outputs=[mul_node_4.output[0]],
             )
+            gelu_node.domain = 'pmx'
             graph.node.insert(node_index, gelu_node)
             print('set gelu node:', gelu_index)
-
-
             remove_node_list(graph, nodes_to_remove)
             break
 
+        if not modify :
+            break
+
+    if gelu_index > 0:
+        return
+
+    while True :
+        modify = False
+        for node_index in range(len(graph.node)) :
+            nodes_to_remove = []
+            div_node = graph.node[node_index]
+            if div_node.op_type != 'Div' :
+                continue
+
+            nodes_to_remove.append(div_node)
+            erf_node = get_node_from_input_name_and_op_type(graph, div_node.output[0], 'Erf')
+            if erf_node is not None :
+                nodes_to_remove.append(erf_node)
+            else :
+                #print ('expect erf node')
+                continue
+
+            add_node = get_node_from_input_name_and_op_type(graph, erf_node.output[0], 'Add')
+            if add_node is not None :
+                nodes_to_remove.append(add_node)
+            else :
+                #print ('expect add_node')
+                continue
+
+            mul_node_1 = get_node_from_input_name_and_op_type(graph, add_node.output[0], 'Mul')
+            if mul_node_1 is not None :
+                nodes_to_remove.append(mul_node_1)
+            else :
+                #print ('expect mul_node_1')
+                continue
+
+            mul_node_2 = get_node_from_input_name_and_op_type(graph, mul_node_1.output[0], 'Mul')
+            if mul_node_2 is not None :
+                nodes_to_remove.append(mul_node_2)
+            else :
+                #print ('expect mul_node_2')
+                continue
+
+            
+            modify = True
+            gelu_index += 1
+            gelu_node_name = 'gelu_node'+str(gelu_index)
+            gelu_node = onnx.helper.make_node('GELU',
+                                            name=gelu_node_name,
+                                            inputs=[div_node.input[0]],
+                                            outputs=[mul_node_2.output[0]],
+            )
+            gelu_node.domain = 'pmx'
+            graph.node.insert(node_index, gelu_node)
+            print('set gelu node:', gelu_index)
+            remove_node_list(graph, nodes_to_remove)
+            break
 
         if not modify :
             break
-    if gelu_index > 0 :
-        return True
-    else :
-        return False
+    
+
 
 
 
@@ -694,6 +748,7 @@ def Multihead_attention_fusion(graph) :
             Multihead_attention_node.attribute.insert(0, onnx.helper.make_attribute("num_heads", num_heads, "num of heads"))
             Multihead_attention_node.attribute.insert(1, onnx.helper.make_attribute("l2norm", l2norm, "l2norm or not"))
             Multihead_attention_node.attribute.insert(2, onnx.helper.make_attribute("attn_type", attn_type, "attn_type, 0 for nlp, 1 for cv"))
+            Multihead_attention_node.domain = 'pmx'
             start_index = get_node_index(graph, start_node)
             print('set Multihead_attention_node on start_node next pos: ', start_index)
             graph.node.insert(start_index+1, Multihead_attention_node)
@@ -1301,7 +1356,8 @@ def main() :
     #fix_MatrixBandPart(model.graph)
     #fix_graph(model.graph)
 
-    #layer_normal_fusion_general(model.graph)
+    layer_normal_fusion_general(model.graph)
+    Tranformer_GELU_fusion(model.graph)
     Multihead_attention_fusion(model.graph)
     #get_node_topology(model.graph, None)
 
