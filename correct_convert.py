@@ -558,17 +558,31 @@ def Multihead_attention_fusion(graph) :
         if node.op_type == 'Softmax' :
             mask_add_node = get_node_from_output_name_and_op_type(graph, node.input[0], 'Add')
             if mask_add_node is not None:
-                l1 = get_node_list_from_input_name(graph, mask_add_node.input[0])
-                l2 = get_node_list_from_input_name(graph, mask_add_node.input[1])
-                if len(l1) > 1 and len(l2) == 1:
-                    key_padding_mask = mask_add_node.input[0]
-                elif len(l1) == 1 and len(l2) > 1:
-                    key_padding_mask = mask_add_node.input[1]
-                else:
-                    key_padding_mask = mask_add_node.input[1]
-                    warnings.warn('the key_mask_padding before softmax seems strange, check it!')
                 attn_type = 0
-                print('deal key_padding_mask ok')
+                nodes_to_remove = []
+                for cast_node in graph.node:
+                    if cast_node.op_type == 'Cast':
+                        sub_node = get_node_from_input_name_and_op_type(graph, cast_node.output[0], 'Sub')
+                        if sub_node:
+                            mul_node = get_node_from_input_name_and_op_type(graph, sub_node.output[0], 'Mul')
+                            if mul_node:
+                                if len(get_node_list_from_input_name_and_op_type(graph, mul_node.output[0], 'Add')) > 1:
+                                    nodes_to_remove.append(cast_node)
+                                    nodes_to_remove.append(sub_node)
+                                    nodes_to_remove.append(mul_node)
+                                    key_padding_mask = cast_node.input[0]
+                                    remove_node_list(graph, nodes_to_remove)
+                                    break
+                                else:
+                                    continue
+                            else:
+                                continue
+                        else:
+                            continue
+                    else:
+                        continue
+                print('deal key_padding_mask ok, key_padding_mask is :')
+                print(key_padding_mask)
             else:
                 warnings.warn('this transformer has no attn mask')
             break
@@ -740,8 +754,8 @@ def Multihead_attention_fusion(graph) :
                 in_project_bias_init = onnx.helper.make_tensor('in_project_bias'+str(Multihead_attention_op_index), TensorProto.FLOAT , list(in_project_bias_cat.shape), in_project_bias_cat.reshape(-1).tolist())
                 append_initializer(graph, in_project_bias_init)
 
-            Multihead_attention_node = onnx.helper.make_node('MultiHeadAttention'
-                                                , name = 'MultiHeadAttention_' + str(Multihead_attention_op_index)
+            Multihead_attention_node = onnx.helper.make_node('SelfAttention'
+                                                , name = 'SelfAttention_' + str(Multihead_attention_op_index)
                                                 , inputs = [x, key_padding_mask, in_project_weight, in_project_bias, out_project_weight, out_project_bias, temperature, gamma]
                                                 , outputs = [y]
                                                 )
@@ -1331,13 +1345,14 @@ def DecoderTransformerFusion(graph, mother_graph = None) :
 
 def main() :
 
-    input_file = '/mnt/hpc/share/xusi/unifold/evoformer_48_dym.onnx'
+    input_file = '/mnt/hpc/share/yyh/transformers/bert/model.onnx'
     out_file = ''
     if len(sys.argv) > 2 :
         input_file = sys.argv[1]
         out_file = sys.argv[2]
     else :
-        out_file = '/mnt/hpc/share/yyh/evoformer/evoformer_48_dym-new.onnx'
+        #out_file = '/mnt/hpc/share/yyh/transformers/bert/model-new.onnx'
+        out_file = '/mnt/hpc/share/yyh/transformers/bert/model-new.onnx'
 
 
     add_pmx = True
